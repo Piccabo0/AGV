@@ -11,7 +11,6 @@
 UART_HandleTypeDef huart4;//磁导航
 UART_HandleTypeDef huart1;//车底盘
 UART_HandleTypeDef huart3;//RFID
-
 //函数预先声明
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -45,6 +44,17 @@ int STOP=0;//红外避障FLAG
 uint8_t rotate[16]={0x01,0x16,0x00,0x38,0x00,0x04,0x00,0x00,0x00,0x96,0x00,0x01,0x00,0x96,0xE2,0x85};
 uint8_t go[16]={0x01,0x16,0x00,0x38,0x00,0x04,0x00,0x00,0x00,0x64,0x00,0x00,0x00,0x64,0x0B,0x15};//Left=100，Right=100
 uint8_t stop[16] = {0x01,0x16,0x00,0x38,0x00,0x04 ,0x00,0x00,0x00,0x00, 0x00,0x00 ,0x00,0x00, 0x7B,0x36};
+uint8_t rotate_right[16]={0x01,0x16,0x00,0x38,0x00,0x04,0x00,0x00,0x00,0x64,0x00,0x01,0x00,0x64,0x5A,0xD5};//右转
+//角度控制
+uint8_t l_90[16] = {0x01,0x16,0x00,0x36,0x00,0x02 ,0x00,0x00,0x00,0x5A, 0x68,0x5A};//左转90°
+uint8_t l_45[16] = {0x01,0x16,0x00,0x36,0x00,0x02 ,0x00,0x00,0x00,0x2D, 0x28,0x7C};//左转45°
+uint8_t r_90[16] = {0x01,0x16,0x00,0x36,0x00,0x02 ,0x00,0x00,0x00,0x5A, 0x39,0x9A};//右转90°
+uint8_t r_45[16] = {0x01,0x16,0x00,0x36,0x00,0x02 ,0x00,0x00,0x00,0x2D, 0x79,0xBC};//右转45°
+
+//模式控制
+	uint8_t s_mod[8] = {0x01,0x06,0x00,0x01,0x00,0x00,0xD8,0x0A};//配置小车为速度模式
+	uint8_t w_mod[8] ={0x01,0x06,0x00,0x01,0x00,0x01,0x19,0xCA};//配置小车为位移模式
+	uint8_t j_mod[8] = {0x01,0x06,0x00,0x01,0x00,0x02,0x59,0xCB};//配置为角度模式
 
 char test_buffer[256];
 
@@ -61,12 +71,10 @@ int main(void)
 	
   printf("---- CAU Sensors Demo ----\r\n");
   printf("Build Time: %s, %s\r\n", __DATE__, __TIME__);
-	Mode_Config();//配置小车的运行模式==速度模式
-	
-	
-	
+	Mode_Config();//配置小车的运行模式:1==speed，2==distance，3==angle
+	FillUartTxBufN((uint8_t*)go, 16, 1);
   while (1)
-  {
+	{
 		button_detect();	
 		//-------------------按下绿色按键启动----------
 		if( BUTTON_GREEN==0)
@@ -112,8 +120,41 @@ int main(void)
          FillUartTxBufN((uint8_t*)test_buffer, strlen(test_buffer), DEBUG_USART_ENUM);        
       }		
     }		
+
   }//while
 }//main
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)//PE9的终端服务子函数
+{
+	/*点灯*/
+	COUNT+=1;
+	switch (GPIO_Pin) 
+		{
+        case GPIO_PIN_9:
+					if(COUNT%2==0)
+					{
+						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);//蓝灯亮
+					}
+					else
+					{
+						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);//蓝灯亮
+					}
+					//STOP=1;
+				break;
+        case GPIO_PIN_11:
+					if(COUNT%2==0)
+					{
+						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);//蓝灯亮
+					}
+					else
+					{
+						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);//蓝灯亮
+					}	
+					//STOP=0;
+				break;
+    }
+	__HAL_GPIO_EXTI_CLEAR_IT(GPIO_Pin);//清除中断标记，消除抖动造成的中断标记置位
+}
 
 void delay_ms(unsigned int ms)
 {
@@ -147,7 +188,8 @@ void Hall_run(void)
 		 else//冲出导轨
 			{
 				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_RESET);//蓝灯灭
-				FillUartTxBufN((uint8_t*)stop, 16, 1);
+				//FillUartTxBufN((uint8_t*)stop, 16, 1);
+				FillUartTxBufN((uint8_t*)rotate_right, 16, 1);
 			}
 }
 
@@ -199,10 +241,23 @@ void Light_Task(void)
 
 void Mode_Config(void)
 {
-	uint8_t s_mod[8] = {0x01,0x06,0x00,0x01,0x00,0x00,0xD8,0x0A};//配置小车为速度模式
-	//uint8_t w_mod[8] ={0x01,0x06,0x00,0x01,0x00,0x01,0x19,0xCA};//配置小车为位移模式 
 	FillUartTxBufN((uint8_t*)s_mod, 8, 1);
-	HAL_Delay(100);
+	//FillUartTxBufN((uint8_t*)j_mod, 8, 1);
+	/*
+	if(mode==1)
+	{
+		FillUartTxBufN((uint8_t*)s_mod, 8, 1);
+	}
+	else if(mode ==2)
+	{
+		FillUartTxBufN((uint8_t*)w_mod, 8, 1);
+	}
+	else
+	{
+		FillUartTxBufN((uint8_t*)j_mod, 8, 1);
+	}
+	*/
+	//HAL_Delay(100);
 }
 
 
@@ -387,12 +442,22 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 	
 	//按键引脚
-	GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11;
+	GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+	//PE9中断
 	
+	GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+	  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);//PE9
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);//PE11
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 }
 
 /* USER CODE BEGIN 4 */
