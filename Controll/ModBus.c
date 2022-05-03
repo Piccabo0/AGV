@@ -14,6 +14,8 @@
 #define HALL_RS485_RX_ACTIVE        RS485_1_RX_Active
 #define HALL_BD_IN_K                115  // 19
 
+uint16_t left,right;
+extern int ROTATE;
 //霍尔传感器接收端相关全局变量
 MODBUS_SAMPLE MODBUS_HallSensor = {
   .MachineState = 0,
@@ -119,6 +121,43 @@ void Analysis_Receive_From_HallSensor(u8 data, MODBUS_SAMPLE* pMODBUS)
             
             //正确读到数据
             memcpy(HallValue,pMODBUS->DataBuf + 3,16);
+						int q1=65;
+						int q2=40;
+						int q3=30;
+						int q4=25;
+						int q5=25;
+						int q6=25;
+						int q7=25;
+						int q8=20;	
+						int _const =130;
+						uint8_t speed1[16] = {0x01,0x16,0x00,0x38,0x00,0x04 ,0x00,0x00,0x00,0x64, 0x00,0x00,0x00,0x64, 0x0B,0x15};
+						if(HallValue[15]+HallValue[14]+HallValue[13]+HallValue[12]+HallValue[11]+HallValue[10]+HallValue[9]+HallValue[8]+HallValue[7]+HallValue[6]+HallValue[5]+HallValue[4]+HallValue[3]+HallValue[2]+HallValue[1]+HallValue[0] != 0)//有信号
+							{
+								ROTATE=0;
+								right =   HallValue[15]*q1+HallValue[14]*q2+HallValue[13]*q3+HallValue[12]*q4+HallValue[11]*q5+HallValue[10]*q6+HallValue[9]*q7+HallValue[8]*q8+_const;
+								left  =   HallValue[0]*q1+HallValue[1]*q2+HallValue[2]*q3+HallValue[3]*q4+HallValue[4]*q5+HallValue[5]*q6+HallValue[6]*q7+HallValue[7]*q8+_const;
+								speed1[7] = 0x00; //左轮方向正转
+								speed1[11] = 0x00;//右轮方向正传
+								speed1[9] = left&0xFF;
+								speed1[8] = left>>8;
+								speed1[13] = right&0xFF ;
+								speed1[12] = right>>8;
+								cal_crc=ModBus_CRC16_Calculate(speed1 , sizeof(speed1)-2);
+								speed1[14]=cal_crc&0xFF;
+								speed1[15]=cal_crc>>8; 
+								FillUartTxBufN((uint8_t*)speed1, 16, 1);
+								HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET);//蓝灯亮
+								HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);//红灯灭
+								}
+						else
+							//冲出导轨
+						{
+								uint8_t stop[16] = {0x01,0x16,0x00,0x38,0x00,0x04 ,0x00,0x00,0x00,0x00, 0x00,0x00 ,0x00,0x00, 0x7B,0x36};
+								FillUartTxBufN((uint8_t*)stop, 16, 1);
+								ROTATE=1;								
+								HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_RESET);//蓝灯灭
+								HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);//红灯亮
+						}
             HallStatusFresh=1;
           }    
           else	  

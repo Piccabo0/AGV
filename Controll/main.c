@@ -18,26 +18,26 @@ static void MX_UART4_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 void Light_Task(void);//四路灯清空显示
-void Mode_Config(void);
-void Infrared_Avoid(void);
-void button_detect(void);
-void Hall_run(void);
+void Mode_Config(void);//模式配置
+void Infrared_Avoid(void);//红外避障改变标志位
+void button_detect(void);//按键去抖检测
+void Hall_run(void);//磁导航循迹
 void speed_Config(uint16_t left, uint16_t right);
 void delay_ms(unsigned int ms);
 
 //RFID&磁导航共同控制量
 int CARD;
-uint16_t left,right;
+extern uint16_t left,right;
 uint8_t speed[16] = {0x01,0x16,0x00,0x38,0x00,0x04 ,0x00,0x00,0x00,0x64, 0x00,0x00,0x00,0x64, 0x0B,0x15};//发送数据格式
 uint16_t cal_crc;
 int COUNT=0;
-
-
 //按键
 int BUTTON_RED=1;
 int BUTTON_GREEN=1;
-int BUTTON_BLUE=1;\
-int STOP=0;//红外避障FLAG
+int BUTTON_BLUE=1;
+int BUTTON=0;
+int STOP=0x00;//红外避障FLAG
+int ROTATE=0;
 
 //控制数据帧定义
 //将uint8_t别名为无符号字符型
@@ -72,39 +72,46 @@ int main(void)
   printf("---- CAU Sensors Demo ----\r\n");
   printf("Build Time: %s, %s\r\n", __DATE__, __TIME__);
 	Mode_Config();//配置小车的运行模式:1==speed，2==distance，3==angle
-	FillUartTxBufN((uint8_t*)go, 16, 1);
+	HAL_Delay(100);
+	//HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);//红灯亮
   while (1)
 	{
-		button_detect();	
-		//-------------------按下绿色按键启动----------
-		if( BUTTON_GREEN==0)
+		UART_Task();  
+		MODBUS_READ_HALL_SERSOR_Task(); 
+		READ_RFID_BLOCK_Task();
+		//黄灯：GPIOE_PIN_3 				蓝灯：GPIOE_PIN_4 				红灯：GPIOE_PIN_5  				绿灯：GPIOE_PIN_6
+		if(BUTTON==0x01)
 		{
-			Infrared_Avoid();//红外避障			
-			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);//红灯灭		
-			if(STOP==0)
+			Infrared_Avoid();
+			if(STOP==0x00)
 			{
+				//FillUartTxBufN((uint8_t*)go, 16, 1
+				//delay_ms(50);
+				
+				if(ROTATE==1)
+				{
+					FillUartTxBufN((uint8_t*)rotate_right, 16, 1);
+					//delay_ms(100);
+					//FillUartTxBufN((uint8_t*)stop, 16, 1);
+				}
+				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);//红灯亮
 				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET);//绿灯亮
-				UART_Task();                    
-				MODBUS_READ_HALL_SERSOR_Task(); 
-				READ_RFID_BLOCK_Task();
-				Hall_run();			
 			}
 			else
-			{
-				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_RESET);//绿灯灭
-				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);//红灯亮@
+			{	
 				FillUartTxBufN((uint8_t*)stop, 16, 1);
+				//delay_ms(50);
+				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);//红灯亮
+				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_RESET);//绿灯灭
 			}
 		}
 		else
-		{
-			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_RESET);//绿灯灭
-			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_RESET);//蓝灯灭
-			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);//红灯亮
+		{		
 			FillUartTxBufN((uint8_t*)stop, 16, 1);
-		 }
-		
-		//------------------------------------------------------------------------
+			//delay_ms(50);
+			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);//红灯亮
+			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_RESET);//绿灯灭
+		}
 		
     if(debug_show)
     {
@@ -118,45 +125,48 @@ int main(void)
              HallValue[12],HallValue[13],HallValue[14],HallValue[15]
              );
          FillUartTxBufN((uint8_t*)test_buffer, strlen(test_buffer), DEBUG_USART_ENUM);        
-      }		
+      }
     }		
 
   }//while
 }//main
 
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)//PE9的终端服务子函数
+//中断服务回调 该程序里没用 一开始测试的时候想用做按键启动小车
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)//PE9的中断服务子函数
 {
 	/*点灯*/
-	COUNT+=1;
-	switch (GPIO_Pin) 
+		COUNT+=1;
+	if(GPIO_Pin==GPIO_PIN_11)
+	{
+		//STOP=1;
+		if(COUNT%2==0)
+			{
+				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);//黄灯亮
+				}
+			else
+				{
+					HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);//黄灯灭
+					}
+				__HAL_GPIO_EXTI_CLEAR_IT(GPIO_Pin);//清除中断标记，消除抖动造成的中断标记置位
+	}
+	else if(GPIO_Pin==GPIO_PIN_9)
+	{
+		if(HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_9)==0)
 		{
-        case GPIO_PIN_9:
-					if(COUNT%2==0)
-					{
-						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);//蓝灯亮
-					}
-					else
-					{
-						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);//蓝灯亮
-					}
-					//STOP=1;
-				break;
-        case GPIO_PIN_11:
-					if(COUNT%2==0)
-					{
-						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);//蓝灯亮
-					}
-					else
-					{
-						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);//蓝灯亮
-					}	
-					//STOP=0;
-				break;
-    }
-	__HAL_GPIO_EXTI_CLEAR_IT(GPIO_Pin);//清除中断标记，消除抖动造成的中断标记置位
-}
+			BUTTON=0x01;
+		}
+		else
+		{
+			BUTTON=0x00;
+		}
+		__HAL_GPIO_EXTI_CLEAR_IT(GPIO_Pin);//清除中断标记，消除抖动造成的中断标记置位
+	}
+					
+ }
 
-void delay_ms(unsigned int ms)
+
+ 
+ void delay_ms(unsigned int ms)
 {
      SysTick_Config(72000);
      for(int i = 0 ; i < ms ;i++)  
@@ -178,19 +188,32 @@ void Hall_run(void)
 		int q7=25;
 		int q8=20;	
 		int _const =130;
-	 if(HallValue[15]+HallValue[14]+HallValue[13]+HallValue[12]+HallValue[11]+HallValue[10]+HallValue[9]+HallValue[8]+HallValue[7]+HallValue[6]+HallValue[5]+HallValue[4]+HallValue[3]+HallValue[2]+HallValue[1]+HallValue[0]> 0)//有信号
+		uint8_t speed1[16] = {0x01,0x16,0x00,0x38,0x00,0x04 ,0x00,0x00,0x00,0x64, 0x00,0x00,0x00,0x64, 0x0B,0x15};
+	 if(HallValue[15]+HallValue[14]+HallValue[13]+HallValue[12]+HallValue[11]+HallValue[10]+HallValue[9]+HallValue[8]+HallValue[7]+HallValue[6]+HallValue[5]+HallValue[4]+HallValue[3]+HallValue[2]+HallValue[1]+HallValue[0] != 0)//有信号
 		 {
-			 HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET);//蓝灯亮
 			 right =   HallValue[15]*q1+HallValue[14]*q2+HallValue[13]*q3+HallValue[12]*q4+HallValue[11]*q5+HallValue[10]*q6+HallValue[9]*q7+HallValue[8]*q8+_const;
 			 left  =   HallValue[0]*q1+HallValue[1]*q2+HallValue[2]*q3+HallValue[3]*q4+HallValue[4]*q5+HallValue[5]*q6+HallValue[6]*q7+HallValue[7]*q8+_const;
-			 speed_Config(left,right);
+			 speed1[7] = 0x00; //左轮方向正转
+			 speed1[11] = 0x00;//右轮方向正传
+			 speed1[9] = left&0xFF;
+			 speed1[8] = left>>8;
+			 speed1[13] = right&0xFF ;
+			 speed1[12] = right>>8;
+			 cal_crc=ModBus_CRC16_Calculate(speed1 , sizeof(speed1)-2);
+			 speed1[14]=cal_crc&0xFF;
+			 speed1[15]=cal_crc>>8; 
+			 FillUartTxBufN((uint8_t*)speed1, 16, 1);
+			 HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET);//蓝灯亮
+			 HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);//红灯灭
 		 }
-		 else//冲出导轨
+		 else
+			 //冲出导轨
 			{
+				FillUartTxBufN((uint8_t*)stop, 16, 1);
 				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_4, GPIO_PIN_RESET);//蓝灯灭
-				//FillUartTxBufN((uint8_t*)stop, 16, 1);
-				FillUartTxBufN((uint8_t*)rotate_right, 16, 1);
+				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);//红灯亮
 			}
+
 }
 
 void speed_Config(uint16_t left, uint16_t right)
@@ -213,24 +236,73 @@ void button_detect(void)
 {
 	//按键采样，按键按下==0
 	//蓝色按钮：GPIOE_PIN_9 			绿色按钮：GPIOE_PIN_10				红色按钮：GPIOE_PIN_11
-	 BUTTON_BLUE=	HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_9);
-	 BUTTON_GREEN=	HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_10);	
-	 BUTTON_RED=	HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_11);
+	if(HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_9)==0)
+		{
+			HAL_Delay(30);
+			if(HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_9)==0)
+			{
+				BUTTON_BLUE =	0;
+			}
+			else
+			{
+				BUTTON_BLUE =	1;
+			}
+		}
+		else
+		{
+			BUTTON_BLUE =	1;
+		}
+		
+		if(HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_10)==0)
+		{
+			HAL_Delay(30);
+			if(HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_10)==0)
+			{
+				BUTTON_GREEN =	0;
+			}
+			else
+			{
+				BUTTON_GREEN =	1;
+			}
+		}
+		else
+		{
+			BUTTON_GREEN =	1;
+		}
+
+		if(HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_11)==0)
+		{
+			HAL_Delay(30);
+			if(HAL_GPIO_ReadPin(GPIOE,GPIO_PIN_11)==0)
+			{
+				BUTTON_RED =	0;
+			}
+			else
+			{
+				BUTTON_RED =	1;
+			}
+		}
+		else
+		{
+			BUTTON_RED =	1;
+		}		
 }
 
 
 void Infrared_Avoid(void)
-{
+{	
 	if(HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_12)+HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_13)+HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14)+HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_15)+HAL_GPIO_ReadPin(GPIOD,GPIO_PIN_8)>0)
 	{
-		STOP=1;
+		STOP=0x01;
 	}//红外避障
 	else 
 	{
-		STOP=0;
+		STOP=0x00;
 	}
 }
 
+
+//清空灯的显示
 void Light_Task(void)
 {
 	//GPIO_PIN_RESET（熄灭） & GPIO_PIN_SET（点亮）
@@ -442,22 +514,24 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 	
 	//按键引脚
-	GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_10;
+	GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_10|GPIO_PIN_11;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 	//PE9中断
 	
-	GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_11;
+
+	GPIO_InitStruct.Pin = GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-	  /* EXTI interrupt init*/
+
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);//PE9
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);//PE11
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+  //HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);//PE11
+  //HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
