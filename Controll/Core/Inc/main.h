@@ -53,6 +53,7 @@ extern "C" {
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
+void delay_ms(unsigned int ms);
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */
